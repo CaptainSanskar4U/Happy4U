@@ -1,0 +1,746 @@
+================================================================================
+     HAPPY4U BIRTHDAY REMINDER — COMPLETE NOTIFICATION SYSTEM DOCUMENTATION
+================================================================================
+
+Author:   Development Session (AI-Assisted)
+Date:     June 18, 2026
+Version:  1.3.0
+Platform: Android (Capacitor 8) / PWA (Service Worker v3)
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1.  Complete Notification System Architecture
+  2.  Step-by-Step Development Process
+  3.  APK Build Process
+  4.  Complete Development Journey (Ups and Downs)
+  5.  Major Problems Faced While Building the Offline Notification System
+  6.  Major Problems Faced During APK Generation
+  7.  Final Notes
+
+================================================================================
+1. COMPLETE NOTIFICATION SYSTEM ARCHITECTURE
+================================================================================
+
+1.1 Overall Design Philosophy
+------------------------------
+
+Happy4U is a fully offline, privacy-first birthday reminder app. It stores all
+data locally (no cloud, no server, no analytics). The notification system is
+designed to work entirely on-device using three layered mechanisms:
+
+  Layer 1: Capacitor Local Notifications (Native Android)
+  Layer 2: Service Worker TimestampTrigger (PWA/Browser)
+  Layer 3: Foreground Polling (Fallback for all platforms)
+
+The system uses a "reconciliation" pattern — a central async function that
+computes all future reminders, diffs them against what is already scheduled,
+and reconciles the two sets. This runs every time any data or setting changes.
+
+1.2 Notification Flow (Start to Finish)
+----------------------------------------
+
+  1. User adds/edits/deletes a birthday OR changes a notification setting.
+  2. React useEffect triggers `runReconciliation()` (debounced 150ms).
+  3. `NotificationReconciliationService.reconcile()` executes:
+     a. Reads all birthdays from localStorage.
+     b. Calculates reminder triggers for current year + next 2 years.
+     c. Filters by enabled offsets (0, 1, 3, 7 days before).
+     d. Filters by per-offset mute settings.
+     e. Applies leap year handling (Feb 28 or March 1 fallback).
+     f. Deduplicates by unique key: `birthdayId-year-offset`.
+     g. Sorts chronologically.
+     h. Trims to the scheduling window (default 90 days) and native limit.
+     i. Saves to localStorage via NotificationScheduler.
+     j. Calls NotificationNativeScheduler.syncWithNativeOS() which:
+        - On Capacitor: diffs against LocalNotifications.getPending(),
+          cancels obsolete, schedules missing.
+        - On Cordova: same diff logic via Cordova plugin.
+        - On WebView Bridge: clears all, re-schedules.
+     k. Records telemetry stats to localStorage.
+     l. Posts message to Service Worker to reschedule its triggers.
+  4. Service Worker receives message and calls rescheduleNotifications():
+     a. Reads birthdays from IndexedDB.
+     b. Calculates trigger dates using getUpcomingReminderDate().
+     c. Schedules up to 20 notifications using TimestampTrigger.
+     d. Cancels stale notification tags.
+  5. Foreground polling runs every 60 seconds:
+     a. Checks scheduled notifications for due times.
+     b. Fires browser Notification API for any that are due.
+     c. Writes to notification inbox.
+
+1.3 Architecture Diagram
+-------------------------
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                         App.tsx                             │
+  │  (React UI, state management, useEffects, debounce)        │
+  │  - offsetMuted0/1/3/7 state                                │
+  │  - notifTimeSameDay/OneDay/ThreeDays/SevenDays state       │
+  │  - runReconciliation() with 150ms debounce                 │
+  │  - checkForegroundDueNotifications() every 60s             │
+  └──────────────┬──────────────────────────────────┬──────────┘
+                 │ calls                            │ polls
+                 v                                  v
+  ┌──────────────────────────┐      ┌──────────────────────────┐
+  │  utils/notifications.ts  │      │  NotificationScheduler   │
+  │  (Core engine)           │      │  (localStorage cache)    │
+  │                          │      │                          │
+  │  - PlatformDetector      │      │  - getScheduledNotifs()  │
+  │  - SettingsStore         │      │  - saveScheduledNotifs() │
+  │  - BirthdayRepository    │      └──────────────────────────┘
+  │  - ReminderCalculator    │
+  │  - NotificationReconcil. │
+  │  - NotificationNativeSch.│
+  │  - NotificationInboxMgr  │
+  └──────────────┬───────────┘
+                 │ syncs to native OS
+                 v
+  ┌──────────────────────────┐
+  │  Capacitor LocalNotifs   │
+  │  (Android AlarmManager)  │
+  │  - schedule()            │
+  │  - cancel()              │
+  │  - getPending()          │
+  └──────────────────────────┘
+                 │
+  ┌──────────────────────────┐
+  │  Service Worker (v3)     │
+  │  public/service-worker.js│
+  │                          │
+  │  - IndexedDB (birthdays, │
+  │    settings, history)    │
+  │  - TimestampTrigger      │
+  │  - PeriodicSync          │
+  │  - BackgroundSync        │
+  │  - checkBirthdaysAndNtfy │
+  │  - rescheduleNotif.      │
+  └──────────────────────────┘
+
+1.4 Purpose of Each File/Module
+--------------------------------
+
+  App.tsx (1624 lines)
+    Main React component. Manages all UI state, offset mute toggles,
+    per-offset notification time pickers, backup/restore, developer mode,
+    and the debounced reconciliation trigger. Contains foreground polling
+    logic that fires due notifications while the app is open.
+
+  utils/notifications.ts (777 lines)
+    Core notification engine. Contains 8 exported modules:
+    - PlatformDetector: Detects Capacitor/Cordova/AndroidBridge/TWA/TimestampTrigger.
+    - requestNotificationPermissions: Capacitor-specific permission request.
+    - SettingsStore: Reads/writes notification settings to localStorage + IndexedDB.
+    - BirthdayRepository: Reads birthdays from localStorage.
+    - ReminderCalculator: Computes ReminderTarget objects (trigger times, titles, bodies).
+    - NotificationScheduler: Persists scheduled notifications to localStorage.
+    - NotificationInboxManager: In-app notification inbox with dedup.
+    - NotificationReconciliationService: Central orchestrator.
+    - NotificationNativeScheduler: Capacitor/Cordova/Bridge native sync.
+
+  public/service-worker.js (565 lines)
+    PWA service worker (v3). Handles:
+    - Stale-While-Revalidate caching strategy.
+    - IndexedDB operations (birthdays, settings, notifications_history).
+    - TimestampTrigger-based OS notification scheduling (up to 20).
+    - Fallback polling via checkBirthdaysAndNotify().
+    - PeriodicSync and BackgroundSync handlers.
+    - Notification click handling with deep-link routing.
+
+  utils/storage.ts (363 lines)
+    Data persistence layer. Provides:
+    - registerServiceWorker(): Registers SW, attempts periodic/background sync.
+    - syncToIndexedDB(): Syncs full birthday array to IndexedDB.
+    - syncSettingToIndexedDB(): Syncs individual settings to IndexedDB.
+    - loadBirthdays(): Loads from IndexedDB with localStorage migration fallback.
+
+  utils/diagnostics.ts (98 lines)
+    Developer diagnostics engine. Probes notification API, service worker status,
+    push manager, periodic/background sync capabilities, IndexedDB, install
+    prompt, display mode, and online status.
+
+  types.ts (34 lines)
+    TypeScript interfaces: Birthday, AppSettings, CelebrationHistory,
+    InAppNotification.
+
+  capacitor.config.ts (19 lines)
+    Capacitor configuration. Sets appId, appName, webDir, androidScheme,
+    and LocalNotifications plugin options (icon, color, sound).
+
+  package.json
+    Dependencies: @capacitor/android 8.4.0, @capacitor/cli 8.4.0,
+    @capacitor/core 8.4.0, @capacitor/local-notifications 8.2.0.
+
+  android/app/build.gradle (54 lines)
+    Android build config. compileSdk=36, targetSdk=36, minSdk=24.
+    Conditionally applies google-services plugin if google-services.json exists.
+
+  android/variables.gradle (16 lines)
+    SDK version variables. Sets all AndroidX library versions.
+
+  generate-icons.mjs (84 lines)
+    Icon generation script using sharp. Generates mipmap icons (mdpi through
+    xxxhdpi), adaptive foreground layers, and notification icons from Logo.png.
+
+================================================================================
+2. STEP-BY-STEP DEVELOPMENT PROCESS
+================================================================================
+
+2.1 Phase 1: Notification System Audit
+---------------------------------------
+
+Before building, we audited the existing notification code and found 11 issues:
+
+  1. Dead code: Unused PendingResult import in notifications.ts.
+  2. Dead code: calculateTriggerDate() and BirthdayRepository.saveBirthdays()
+     never called.
+  3. Dead Firebase: utils/firebase.ts and firebase-messaging-sw.js existed
+     but were never used (no Firebase project configured).
+  4. Dead dependencies: firebase and @supabase/supabase-js in package.json
+     but never imported anywhere.
+  5. Duplicate service workers: Root service-worker.js (v2) and
+     public/service-worker.js (v3) conflicted.
+  6. Dead code in SW: const targetDays unused in root service-worker.js.
+  7. Hardcoded offset matching: checkBirthdaysAndNotify() used
+     if (offset===0/1/3/7) instead of generic daysUntil===offset.
+  8. Missing 7-day toggle: UI had 0, 1, 3-day toggles but no 7-day toggle.
+  9. Duplicate platform detection: isNativeNotificationSupported() defined
+     twice (once in notifications.ts, once in App.tsx).
+  10. Race conditions: runReconciliation() had no debounce or guard against
+      overlapping async runs.
+  11. Exposed secrets: .env file contained real Firebase keys.
+
+2.2 Phase 2: Systematic Fixes
+-------------------------------
+
+Fix 1 — Removed unused PendingResult import (notifications.ts line removed).
+
+Fix 2 — Deleted dead Firebase files:
+  - Removed utils/firebase.ts
+  - Removed public/firebase-messaging-sw.js
+  - Removed firebase and @supabase/supabase-js from package.json
+
+Fix 3 — Unified service workers:
+  - Deleted root service-worker.js (v2, dead code)
+  - public/service-worker.js (v3) is the sole source of truth
+
+Fix 4 — Removed dead const targetDays in public/service-worker.js.
+
+Fix 5 — Removed dead code from notifications.ts:
+  - Removed calculateTriggerDate() function
+  - Removed BirthdayRepository.saveBirthdays() method
+
+Fix 6 — Fixed offset matching in checkBirthdaysAndNotify():
+  - Replaced hardcoded if (offset===0/1/3/7) with generic
+    if (daysUntil === offset) to support any reminder offset.
+
+Fix 7 — Added missing 7-day reminder toggle:
+  - Added offsetMuted7 state variable
+  - Added notifTimeSevenDays state variable
+  - Added useEffect for persisting 7-day toggle
+  - Added useEffect for persisting 7-day notification time
+  - Added 7-day toggle UI with time picker in settings
+  - Added 7-day backup/restore support in handleBackup/handleRestore
+
+Fix 8 — Removed duplicate platform detection:
+  - Removed isNativeNotificationSupported() from App.tsx
+  - Replaced usage with PlatformDetector.hasNativeLocalNotifications()
+
+Fix 9 — Debounced runReconciliation():
+  - Added reconciliationTimerRef (150ms setTimeout)
+  - Added reconciliationRunningRef (prevents overlapping runs)
+  - Added reconciliationPendingRef (queues pending runs)
+  - Pattern: if running, set pending flag; when done, check pending and re-run
+
+Fix 10 — Deleted unused files:
+  - Removed components/ReviewView.tsx
+  - Removed api/reviews.ts
+  - Removed api/ directory
+  - Removed tmp/ directory
+
+Fix 11 — Cleaned .env file:
+  - Replaced real Firebase keys with placeholder values
+  - Added .env to .gitignore
+
+2.3 Phase 3: Icon Generation
+-----------------------------
+
+Used sharp (Node.js image processing) to generate all Android icons from Logo.png:
+
+  Source: Logo.png (project root)
+  Output: android/app/src/main/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/
+
+  Generated files per density:
+    - ic_launcher.png (standard launcher icon)
+    - ic_launcher_round.png (round launcher icon)
+    - ic_launcher_foreground.png (adaptive icon foreground layer)
+
+  Plus:
+    - Notification icon (ic_stat_icon_config_sample.png)
+    - Adaptive icon background color: #1668B5 (Logo blue)
+
+  Script: generate-icons.mjs (uses sharp for resize/crop)
+
+2.4 Phase 4: Capacitor Android Setup
+--------------------------------------
+
+  1. Installed JDK 21 (Capacitor 8 requires Java 21):
+     - Path: C:\Users\Captain\jdks\jdk-21.0.7+6
+
+  2. Verified Android SDK:
+     - ANDROID_HOME: C:\Users\Captain\AppData\Local\Android\Sdk
+     - Installed platform: android-36
+     - Installed build-tools: 36.0.0
+
+  3. Configured capacitor.config.ts:
+     - appId: com.happy4u.birthdayreminder
+     - appName: Happy4U
+     - webDir: dist
+     - androidScheme: https
+     - LocalNotifications plugin config
+
+  4. Ran npm install to install Capacitor dependencies.
+
+  5. Built web assets: npm run build -> dist/
+
+  6. Synced to Android: npx cap sync android
+
+2.5 Phase 5: APK Build
+------------------------
+
+  Debug APK:
+    cd android && ./gradlew assembleDebug
+    Output: android/app/build/outputs/apk/debug/app-debug.apk (5.9 MB)
+
+  Release APK (initial attempt — FAILED):
+    cd android && ./gradlew assembleRelease
+    Output: android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+  Release APK signing (initial — FAILED):
+    Used jarsigner (v1 JAR signing only).
+    Then zipaligned.
+    Result: APK signed with v1 only, but targetSdk=36 requires v2 minimum.
+
+  Release APK signing (fix — SUCCESS):
+    Used apksigner (APK Signature Scheme v2+v3).
+    Process: zipalign FIRST, then apksigner sign.
+    Result: APK verified with v2+v3.
+
+================================================================================
+3. APK BUILD PROCESS
+================================================================================
+
+3.1 Prerequisites
+------------------
+
+  Required software:
+    - Node.js (npm)
+    - JDK 21 (Capacitor 8 requirement)
+    - Android SDK (platform 36, build-tools 36.0.0)
+    - Gradle (bundled with Android project via wrapper)
+
+  Environment variables:
+    JAVA_HOME = C:\Users\Captain\jdks\jdk-21.0.7+6
+    ANDROID_HOME = C:\Users\Captain\AppData\Local\Android\Sdk
+    ANDROID_SDK_ROOT = C:\Users\Captain\AppData\Local\Android\Sdk
+
+3.2 Build Commands
+------------------
+
+  Step 1: Install dependencies
+    npm install
+
+  Step 2: Build web assets
+    npm run build
+    (Produces dist/ directory with compiled Vite output)
+
+  Step 3: Sync to Android
+    npx cap sync android
+    (Copies dist/ to android/app/src/main/assets/public/,
+     updates Capacitor plugins, generates Java files)
+
+  Step 4: Build debug APK
+    cd android
+    set JAVA_HOME=C:\Users\Captain\jdks\jdk-21.0.7+6
+    set ANDROID_HOME=C:\Users\Captain\AppData\Local\Android\Sdk
+    set ANDROID_SDK_ROOT=C:\Users\Captain\AppData\Local\Android\Sdk
+    gradlew.bat assembleDebug
+
+  Step 5: Build release APK
+    gradlew.bat assembleRelease
+
+  Step 6: Sign release APK (REQUIRED for targetSdk 36)
+    # Step 6a: Generate keystore (one-time)
+    keytool -genkeypair -v -keystore happy4u-release.jks -alias happy4u ^
+      -keyalg RSA -keysize 2048 -validity 10000 ^
+      -storepass happy4u123 -keypass happy4u123 ^
+      -dname "CN=Happy4U, OU=Happy4U, O=Happy4U, L=Unknown, ST=Unknown, C=US"
+
+    # Step 6b: Zipalign (MUST be before signing)
+    zipalign -v -p 4 app-release-unsigned.apk app-release-aligned.apk
+
+    # Step 6c: Sign with apksigner (NOT jarsigner)
+    apksigner sign --ks happy4u-release.jks --ks-key-alias happy4u ^
+      --ks-pass pass:happy4u123 --key-pass pass:happy4u123 ^
+      --v1-signing-enabled true --v2-signing-enabled true ^
+      --v3-signing-enabled true app-release-aligned.apk
+
+  Step 7: Verify
+    apksigner verify --verbose --print-certs Happy4U-release.apk
+    zipalign -c -v -p 4 Happy4U-release.apk
+
+3.3 Key Configuration
+----------------------
+
+  android/variables.gradle:
+    minSdkVersion = 24
+    compileSdkVersion = 36
+    targetSdkVersion = 36
+
+  android/app/build.gradle:
+    namespace = "com.captainsanskar.happy4u"
+    applicationId = "com.captainsanskar.happy4u"
+
+  capacitor.config.ts:
+    appId = "com.happy4u.birthdayreminder"
+    appName = "Happy4U"
+
+  IMPORTANT: There is a mismatch between the Capacitor appId
+  (com.happy4u.birthdayreminder) and the Android applicationId
+  (com.captainsanskar.happy4u). The Android applicationId takes precedence
+  for the installed app identity. This was not changed because it matches
+  the original project configuration.
+
+3.4 File Locations After Build
+-------------------------------
+
+  Debug APK:
+    android/app/build/outputs/apk/debug/app-debug.apk
+
+  Release APK (unsigned, before signing):
+    android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+  Final Release APK (signed):
+    apk/Happy4U-release.apk
+
+  Keystore:
+    apk/happy4u-release.jks
+    Password: happy4u123
+    Alias: happy4u
+
+================================================================================
+4. COMPLETE DEVELOPMENT JOURNEY (UPS AND DOWNS)
+================================================================================
+
+4.1 Beginning: The Audit Phase
+-------------------------------
+
+The project started as a Capacitor-based birthday reminder PWA that had basic
+notification code but was riddled with dead code, unused dependencies, and
+architectural issues. The initial state was:
+
+  - Two service workers (root v2 and public v3) competing for control.
+  - Firebase files that referenced a project that didn't exist.
+  - Supabase dependency that was never imported.
+  - Dead functions (calculateTriggerDate, saveBirthdays) cluttering the codebase.
+  - No 7-day reminder toggle despite the UI supporting 0, 1, and 3-day offsets.
+  - Race conditions in the reconciliation engine.
+
+The audit was thorough — every file was read line by line, and each issue was
+categorized by severity (critical, moderate, cosmetic).
+
+4.2 The Fix Marathon
+---------------------
+
+We worked through 11 issues sequentially:
+
+  Fix 1 (Easy): Removed one unused import line. Trivial.
+
+  Fix 2 (Moderate): Deleted Firebase files and removed dependencies.
+  Had to verify no other files imported from the deleted files. Used grep
+  to confirm.
+
+  Fix 3 (Critical): Deleting the root service-worker.js was scary — what if
+  the browser was caching the old version? Verified that public/service-worker.js
+  (v3) was the one registered by utils/storage.ts. Confirmed by reading
+  registerServiceWorker() which calls navigator.serviceWorker.register('/service-worker.js').
+
+  Fix 4 (Easy): Removed one dead variable declaration.
+
+  Fix 5 (Moderate): Removed dead functions. Had to verify no callers existed.
+  Used grep to confirm calculateTriggerDate was never called.
+
+  Fix 6 (Critical): The offset matching bug was subtle. The original code:
+    if (offset === 0) { /* check same-day */ }
+    else if (offset === 1) { /* check 1-day */ }
+    else if (offset === 3) { /* check 3-day */ }
+    else if (offset === 7) { /* check 7-day */ }
+  This would FAIL for any non-standard offset. The fix:
+    if (daysUntil === offset) { /* generic check */ }
+  This works for ANY offset value, not just hardcoded ones.
+
+  Fix 7 (Moderate): Adding the 7-day toggle required changes in 4 places:
+  state declaration, useEffect for persistence, useEffect for IndexedDB sync,
+  and the UI component. Also had to add it to backup/restore.
+
+  Fix 8 (Easy): Removed duplicate function, replaced with existing utility.
+
+  Fix 9 (Critical): The race condition was the hardest bug. When a user
+  toggled multiple settings rapidly (e.g., toggling 0-day and 1-day within
+  100ms), two reconcile() calls would overlap. The second call would read
+  stale state from the first call's perspective. The debounce pattern with
+  running/pending refs solved this elegantly.
+
+  Fix 10 (Easy): Deleted unused files.
+
+  Fix 11 (Easy): Cleaned environment file.
+
+4.3 The Icon Generation Saga
+-----------------------------
+
+Generating icons from Logo.png was straightforward using sharp, but required
+careful attention to Android's icon specifications:
+
+  - mdpi: 48x48
+  - hdpi: 72x72
+  - xhdpi: 96x96
+  - xxhdpi: 144x144
+  - xxxhdpi: 192x192
+
+  Adaptive foreground: 432x432 (with 72px padding on each side for safe zone)
+
+  The notification icon needed to be a simple monochrome silhouette for
+  Android notification shade.
+
+  The adaptive icon background color was set to #1668B5 (matching the Logo blue)
+  in a separate XML file.
+
+4.4 The JDK Version Battle
+---------------------------
+
+The first build attempt used JDK 17 (commonly installed). It failed with:
+
+  ERROR: error: invalid source release: 21
+
+This was confusing at first — the error message doesn't clearly say "you need
+JDK 21." After investigation, we found that Capacitor 8's capacitor-android
+module requires Java 21 as its source level. The solution was to install JDK 21:
+
+  - Downloaded from Adoptium/Temurin
+  - Installed to C:\Users\Captain\jdks\jdk-21.0.7+6
+  - Set JAVA_HOME environment variable
+
+After this, the Gradle build succeeded.
+
+4.5 The APK Signing Nightmare
+-------------------------------
+
+This was the most frustrating part of the entire process. The sequence of events:
+
+  Attempt 1: Build release APK with Gradle -> produces app-release-unsigned.apk.
+  This APK has NO signature at all and cannot be installed.
+
+  Attempt 2: Sign with jarsigner (the Java signing tool).
+    jarsigner -keystore happy4u-release.jks app-release-unsigned.apk happy4u
+    Then zipalign.
+    Result: apksigner verify says "DOES NOT VERIFY"
+    Error: "Target SDK version 36 requires a minimum of signature scheme v2"
+
+  Investigation: jarsigner only creates JAR signatures (v1). Android 7+ (API 24+)
+  requires APK Signature Scheme v2. targetSdk=36 absolutely requires v2.
+  Additionally, the signing order was wrong: zipalign must come BEFORE signing,
+  not after.
+
+  Attempt 3 (Final Fix):
+    1. zipalign the unsigned APK first
+    2. Sign with apksigner (which creates v2+v3 signatures)
+    Result: apksigner verify says "Verifies" with v2=true, v3=true.
+
+  The key insight: jarsigner is for JAR files, apksigner is for APK files.
+  They are different tools with different purposes. Android APKs must use
+  apksigner for modern signature schemes.
+
+4.6 The Android SDK Platform Issue
+------------------------------------
+
+During the initial Capacitor sync, we discovered the Android SDK was missing
+the required platform. The error was:
+
+  FAILURE: Build failed with an exception.
+  * What went wrong:
+    Could not determine the dependencies of task ':app:compileDebugJavaWithJavac'.
+    > Failed to install the following SDK packages:
+      platforms;android-36
+
+  Fix: Install platform 36 and build-tools 36.0.0 via sdkmanager.
+
+================================================================================
+5. MAJOR PROBLEMS: OFFLINE NOTIFICATION SYSTEM
+================================================================================
+
+Problem 1: Dual Service Workers
+  Cause: Root service-worker.js (v2) and public/service-worker.js (v3) both
+         existed. Only one can be active. The root version was older and had
+         dead code.
+  Solution: Deleted root service-worker.js. public/service-worker.js is the
+            sole source of truth. Verified by checking registration code.
+
+Problem 2: Dead Firebase/Supabase Code
+  Cause: Previous developer apparently started integrating Firebase Cloud
+         Messaging and Supabase but abandoned the approach. Dead files and
+         dependencies remained.
+  Solution: Deleted all Firebase files, removed firebase and @supabase from
+            package.json, cleaned .env of real keys.
+
+Problem 3: Hardcoded Offset Matching
+  Cause: checkBirthdaysAndNotify() had explicit if/else chains for offsets
+         0, 1, 3, 7. Any other offset would silently fail.
+  Solution: Replaced with generic `if (daysUntil === offset)` check.
+
+Problem 4: Missing 7-Day Toggle
+  Cause: The service worker and notification engine supported 7-day offsets,
+         but the UI only had toggles for 0, 1, and 3-day offsets.
+  Solution: Added offsetMuted7 state, notifTimeSevenDays state, corresponding
+            useEffects, UI toggle with time picker, and backup/restore support.
+
+Problem 5: Duplicate Platform Detection
+  Cause: isNativeNotificationSupported() was defined in App.tsx and a similar
+         hasNativeLocalNotifications() existed in notifications.ts. They could
+         diverge.
+  Solution: Removed duplicate from App.tsx, consolidated into PlatformDetector.
+
+Problem 6: Reconciliation Race Conditions
+  Cause: When multiple settings changed rapidly (e.g., toggling several offset
+         switches), multiple reconcile() calls would fire and overlap. Since
+         reconcile() is async, the second call could read stale state from the
+         first call's context.
+  Solution: 150ms debounce timer + running ref guard + pending ref queue.
+            Pattern: debounce -> check if running -> if yes, mark pending ->
+                     when done, check pending -> re-run if needed.
+
+Problem 7: Dead Code Accumulation
+  Cause: calculateTriggerDate() and BirthdayRepository.saveBirthdays() were
+         defined but never called. They added confusion during code review.
+  Solution: Verified no callers via grep, then deleted.
+
+================================================================================
+6. MAJOR PROBLEMS: APK GENERATION
+================================================================================
+
+Problem 1: JDK Version Mismatch
+  Cause: Capacitor 8 requires JDK 21 as its compilation target. The system
+         had JDK 17 installed. Gradle failed with "invalid source release: 21".
+  Solution: Installed JDK 21 from Adoptium. Set JAVA_HOME to point to it.
+
+Problem 2: Missing Android SDK Platform
+  Cause: The Android SDK was installed but missing platform android-36 and
+         build-tools 36.0.0, which are required by the build configuration.
+  Solution: Used sdkmanager to install platform 36 and build-tools 36.0.0.
+
+Problem 3: Release APK Not Installable (jarsigner vs apksigner)
+  Cause: The release APK was signed with jarsigner (v1 JAR signing) instead
+         of apksigner (APK Signature Scheme v2/v3). Additionally, zipalign
+         was run AFTER signing, which invalidates the signature.
+         targetSdk=36 requires APK Signature Scheme v2 minimum.
+  Solution: Used the correct tool and order:
+            1. zipalign FIRST (alignment before signing)
+            2. apksigner sign with --v2-signing-enabled --v3-signing-enabled
+
+Problem 4: Unsigned Release APK
+  Cause: Gradle's assembleRelease produces an unsigned APK by default when
+         no signingConfig is specified in build.gradle.
+  Solution: Generated a keystore with keytool, then signed manually with
+            apksigner. (Could also configure signingConfig in build.gradle
+            for automated signing, but manual signing was simpler for a
+            one-time build.)
+
+Problem 5: Environment Variable Propagation
+  Cause: JAVA_HOME and ANDROID_HOME needed to be set in the same shell
+         session as the Gradle build. PowerShell commands that set env
+         vars in one call didn't persist to the next call.
+  Solution: Set all environment variables in a single PowerShell command
+            chained with && before running Gradle.
+
+================================================================================
+7. FINAL NOTES
+================================================================================
+
+7.1 Limitations
+----------------
+
+  - The release APK uses a self-signed certificate. It cannot be published
+    to Google Play Store without signing with a Play Console upload key.
+  - TimestampTrigger (for scheduled background notifications) is NOT supported
+    in all Android WebViews. The Capacitor LocalNotifications plugin is the
+    primary notification mechanism on Android.
+  - The 20-notification limit in the service worker is a browser quota
+    restriction. On native Capacitor, up to 500 notifications can be scheduled.
+  - Leap year handling defaults to Feb 28. The alternative (March 1) is
+    available in settings but must be manually selected.
+  - The notification inbox is in-memory (localStorage). Clearing browser data
+    will lose notification history.
+
+7.2 Assumptions
+----------------
+
+  - Users will grant notification permissions when prompted.
+  - Birthdays are stored as YYYY-MM-DD strings.
+  - The app runs on Android 7.0+ (API 24+) based on minSdkVersion=24.
+  - The device has enough storage for up to 500 scheduled notifications.
+  - Users will not modify the keystore password or alias.
+
+7.3 Future Improvements
+-------------------------
+
+  - Configure signingConfig in build.gradle for automated release signing.
+  - Add Firebase Cloud Messaging for reliable push notifications.
+  - Implement notification channels (Android 8+) for user-configurable
+    notification importance levels.
+  - Add recurring birthday notifications ( yearly repeat).
+  - Support contact integration (read birthdays from phone contacts).
+  - Add widget support for home screen birthday countdown.
+  - Implement data export to calendar format (.ics).
+  - Add internationalization (i18n) for notification text.
+
+7.4 Important Implementation Details for Future Developers
+-----------------------------------------------------------
+
+  CRITICAL: The reconciliation engine is the heart of the notification system.
+  Any change to birthday data or notification settings will trigger a full
+  re-reconciliation. This is by design — it ensures consistency.
+
+  CRITICAL: The debounce pattern in runReconciliation() must be preserved.
+  Removing it WILL cause race conditions when users change settings rapidly.
+
+  IMPORTANT: When adding new reminder offsets (e.g., 14-day, 30-day), you
+  must update ALL of the following:
+    1. App.tsx: Add state variables for offsetMuted and notifTime
+    2. App.tsx: Add useEffects for persisting to localStorage
+    3. App.tsx: Add UI toggle with time picker
+    4. App.tsx: Add to backup/restore handlers
+    5. utils/notifications.ts: SettingsStore.getNotificationTimeForOffset()
+    6. utils/notifications.ts: SettingsStore.setNotificationTimeForOffset()
+    7. public/service-worker.js: rescheduleNotifications() time string lookup
+    8. public/service-worker.js: checkBirthdaysAndNotify() title/body text
+
+  IMPORTANT: Service Worker v3 (public/service-worker.js) is the ONLY source
+  of truth for the service worker. Do NOT create a root service-worker.js.
+
+  IMPORTANT: The Capacitor LocalNotifications plugin is the primary mechanism
+  for notifications on Android. The service worker's TimestampTrigger is a
+  secondary mechanism that may not work in all Android WebViews.
+
+  IMPORTANT: Always zipalign BEFORE signing with apksigner. Running zipalign
+  after signing will invalidate the signature.
+
+  IMPORTANT: targetSdkVersion 36 REQUIRES APK Signature Scheme v2. Do not
+  use jarsigner for release builds. Use apksigner with --v2-signing-enabled.
+
+  DEVELOPER MODE: Tap the version number 7 times in Settings to unlock the
+  developer diagnostics panel, which shows reconciliation telemetry,
+  scheduler configuration, and PWA capability diagnostics.
+
+================================================================================
+                         END OF DOCUMENTATION
+================================================================================

@@ -1,0 +1,222 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#D2F801">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    
+    <!-- PWA requirements -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Prevent caching issues for WebIntoApp -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <title>Happy4U</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        background: 'var(--color-background)',
+                        surface: 'var(--color-surface)',
+                        surfaceLight: 'var(--color-surface-light)',
+                        'dark-card': 'var(--color-card)',
+                        'dark-border': 'var(--color-border)',
+                        primary: 'var(--color-text-primary)',
+                        muted: 'var(--color-text-secondary)',
+                        lime: {
+                            DEFAULT: 'var(--color-lime)', 
+                            dim: 'var(--color-lime-dim)',
+                            glow: 'var(--color-lime-glow)'
+                        }
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'popup': 'popup 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards',
+                        'slide-up': 'slideUp 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
+                        'scale-in': 'scaleIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'blob': 'blob 7s infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        },
+                        popup: {
+                            '0%': { opacity: '0', transform: 'scale(0.95) translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'scale(1) translateY(0)' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(30px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        },
+                        scaleIn: {
+                            '0%': { opacity: '0', transform: 'scale(0.8)' },
+                            '100%': { opacity: '1', transform: 'scale(1)' },
+                        },
+                        blob: {
+                            "0%": { transform: "translate(0px, 0px) scale(1)" },
+                            "33%": { transform: "translate(30px, -50px) scale(1.1)" },
+                            "66%": { transform: "translate(-20px, 20px) scale(0.9)" },
+                            "100%": { transform: "translate(0px, 0px) scale(1)" }
+                        }
+                    },
+                    backgroundImage: {
+                        'neon-gradient': 'linear-gradient(135deg, var(--color-lime) 0%, var(--color-lime-dim) 100%)',
+                        'dark-gradient': 'linear-gradient(180deg, var(--color-surface-light) 0%, var(--color-surface) 100%)',
+                        'mesh': 'radial-gradient(circle at 50% -20%, var(--color-mesh-1), var(--color-mesh-2))'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --color-background: #000000;
+            --color-surface: #121212;
+            --color-surface-light: #1E1E1E;
+            --color-card: #0F0F11;
+            --color-border: rgba(255, 255, 255, 0.1);
+            --color-text-primary: #ffffff;
+            --color-text-secondary: #9ca3af;
+            
+            /* Dynamic Accent Colors (Default: Lime) */
+            --color-lime: #D2F801;
+            --color-lime-dim: #b5d600;
+            --color-lime-glow: rgba(210, 248, 1, 0.5);
+
+            --color-mesh-1: #2A2A2A;
+            --color-mesh-2: #000000;
+        }
+
+        .light-mode {
+            --color-background: #F3F4F6;
+            --color-surface: #FFFFFF;
+            --color-surface-light: #F9FAFB;
+            --color-card: #FFFFFF;
+            --color-border: #E5E7EB;
+            --color-text-primary: #111827;
+            --color-text-secondary: #6B7280;
+            --color-mesh-1: #E5E7EB;
+            --color-mesh-2: #F3F4F6;
+        }
+
+        body {
+            background-color: var(--color-background);
+            color: var(--color-text-primary);
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none; /* Disables pull-to-refresh on mobile */
+            transition: background-color 0.3s ease, color 0.3s ease;
+            
+            /* Performance - Text Rendering */
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            
+            /* Performance - iOS Momentum Scrolling */
+            -webkit-overflow-scrolling: touch;
+
+            /* Safe Area Handling for Notches/Home Bars */
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+
+        /* 
+           Performance Note:
+           Glassmorphism (backdrop-filter) is expensive on mobile GPUs.
+           We force these elements into their own Compositor Layer using transform: translateZ(0).
+        */
+        .glass-panel {
+            background: rgba(18, 18, 18, 0.85); /* Slightly more opaque for better legibility */
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--color-border);
+        }
+
+        .light-mode .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .gpu-layer {
+            transform: translateZ(0);
+            will-change: transform, opacity;
+        }
+
+        .neon-shadow {
+            box-shadow: 0 0 20px var(--color-lime-glow);
+        }
+        
+        .card-shine {
+            position: relative;
+            overflow: hidden;
+            transform: translateZ(0); /* Fix flickering during scroll */
+        }
+        
+        .card-shine::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(125deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0) 70%);
+            pointer-events: none;
+        }
+
+        .light-mode .card-shine::after {
+            background: linear-gradient(125deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.02) 50%, rgba(0,0,0,0) 70%);
+        }
+        
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            opacity: 0.5;
+        }
+
+        .light-mode input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0);
+            opacity: 0.5;
+        }
+
+        /* Optimize button clicks to remove delay on touch devices */
+        button {
+            touch-action: manipulation;
+        }
+
+        /* Utility for animation delay */
+        .animation-delay-2000 {
+            animation-delay: 2s;
+        }
+        .animation-delay-4000 {
+            animation-delay: 4s;
+        }
+    </style>
+
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

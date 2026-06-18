@@ -1,0 +1,41 @@
+{
+  "name": "Happy4U Birthday Reminder",
+  "short_name": "Happy4U",
+  "description": "Never forget a birthday with Happy4U. Premium, offline-first personal birthday tracker and reminder with modern neon styling.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#D2F801",
+  "id": "com.happy4u.birthdayreminder",
+  "lang": "en",
+  "categories": ["utilities", "lifestyle"],
+  "gcm_sender_id": "103953800507",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "Happy4U",
+  "description": "A premium Birthday Tracker PWA with viral celebration features and smart reminders.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
