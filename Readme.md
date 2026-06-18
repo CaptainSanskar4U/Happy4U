@@ -9,7 +9,7 @@
 ![Vite](https://img.shields.io/badge/Vite-6.2-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![Capacitor](https://img.shields.io/badge/Capacitor-8.4-119EFF?style=for-the-badge&logo=capacitor&logoColor=white)
 
-**A premium Progressive Web App (PWA) that tracks birthdays, sends smart reminders, and celebrates with you — all from your browser or Android device.**
+**A premium Progressive App, that tracks birthdays, sends smart reminders, and celebrates with you — all from your browser or Android device.**
 
 [✨ Live Demo](https://happy4u.app) · [📦 Download APK](#-download-apk) · [🐛 Report Bug](https://github.com/CaptainSanskar4U/Happy4U/issues)
 
